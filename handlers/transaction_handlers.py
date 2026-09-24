@@ -1,5 +1,7 @@
 # Transaction CRUD, filtering, sorting, and monthly summary handlers.
 from datetime import datetime, timezone, date
+from decimal import Decimal
+import re
 from bson import ObjectId
 from pydantic import ValidationError
 import tornado.web
@@ -35,8 +37,9 @@ class TransactionCollectionHandler(BaseHandler):
                 query['date']['$lte'] = end_date
         search = self.get_query_argument('search', '').strip()
         if search:
-            category_ids = [str(x['_id']) async for x in db.categories.find({'name': {'$regex': search, '$options': 'i'}})]
-            query['$or'] = [{'description': {'$regex': search, '$options': 'i'}}, {'category_id': {'$in': category_ids}}]
+            escaped_search = re.escape(search)
+            category_ids = [str(x['_id']) async for x in db.categories.find({'name': {'$regex': escaped_search, '$options': 'i'}})]
+            query['$or'] = [{'description': {'$regex': escaped_search, '$options': 'i'}}, {'category_id': {'$in': category_ids}}]
         try:
             limit = max(1, min(int(self.get_query_argument('limit', '20')), 100))
             offset = max(0, int(self.get_query_argument('offset', '0')))
@@ -52,7 +55,7 @@ class TransactionCollectionHandler(BaseHandler):
         records = [x async for x in db.transactions.find(query)]
         categories = {str(x['_id']): x['name'] async for x in db.categories.find({'_id': {'$in': [ObjectId(x['category_id']) for x in records if ObjectId.is_valid(x['category_id'])]}})}
         reverse = order == 'desc'
-        records.sort(key=lambda x: categories.get(x['category_id'], '') if sort_by == 'category' else x[sort_by], reverse=reverse)
+        records.sort(key=lambda x: categories.get(x['category_id'], '') if sort_by == 'category' else Decimal(str(x['amount'])) if sort_by == 'amount' else x['date'], reverse=reverse)
         items = [self.serialize(record, categories.get(record['category_id'], 'Unknown')) for record in records[offset:offset + limit]]
         self.write_json({'items': items, 'total': total, 'limit': limit, 'offset': offset})
 
@@ -60,10 +63,10 @@ class TransactionCollectionHandler(BaseHandler):
         try:
             payload = TransactionCreateSchema.model_validate(self.parse_json())
         except ValidationError as exc:
-            raise tornado.web.HTTPError(422, reason=str(exc)) from exc
+            raise self.validation_error(exc) from exc
         category = await self.category_for_user(payload.category_id)
         now = datetime.now(timezone.utc)
-        doc = {'user_id': self.current_api_key['user_id'], 'category_id': payload.category_id, 'amount': float(payload.amount), 'type': payload.type, 'date': payload.date.isoformat(), 'description': payload.description, 'created_at': now, 'updated_at': now}
+        doc = {'user_id': self.current_api_key['user_id'], 'category_id': payload.category_id, 'amount': format(payload.amount, 'f'), 'type': payload.type, 'date': payload.date.isoformat(), 'description': payload.description, 'created_at': now, 'updated_at': now}
         result = await db.transactions.insert_one(doc)
         doc['_id'] = result.inserted_id
         self.write_json(self.serialize(doc, category['name']), 201)
@@ -91,13 +94,13 @@ class TransactionDetailHandler(TransactionCollectionHandler):
         try:
             payload = TransactionUpdateSchema.model_validate(self.parse_json())
         except ValidationError as exc:
-            raise tornado.web.HTTPError(422, reason=str(exc)) from exc
+            raise self.validation_error(exc) from exc
         changes = payload.model_dump(exclude_none=True)
         if 'category_id' in changes:
             category = await self.category_for_user(changes['category_id'])
         else:
             category = await self.category_for_user(doc['category_id'])
-        if 'amount' in changes: changes['amount'] = float(changes['amount'])
+        if 'amount' in changes: changes['amount'] = format(changes['amount'], 'f')
         if 'date' in changes: changes['date'] = changes['date'].isoformat()
         changes['updated_at'] = datetime.now(timezone.utc)
         await db.transactions.update_one({'_id': doc['_id']}, {'$set': changes})
@@ -127,13 +130,13 @@ class MonthlySummaryHandler(BaseHandler):
         except ValueError as exc:
             raise tornado.web.HTTPError(400, reason='month must be YYYY-MM') from exc
         rows = [x async for x in db.transactions.find({'user_id': self.current_api_key['user_id'], 'date': {'$gte': f'{month}-01', '$lte': f'{month}-31'}})]
-        income = sum(x['amount'] for x in rows if x['type'] == 'Income')
-        expenses = sum(x['amount'] for x in rows if x['type'] == 'Expense')
+        income = sum((Decimal(str(x['amount'])) for x in rows if x['type'] == 'Income'), Decimal('0'))
+        expenses = sum((Decimal(str(x['amount'])) for x in rows if x['type'] == 'Expense'), Decimal('0'))
         cat_ids = [ObjectId(x['category_id']) for x in rows if x['type'] == 'Expense' and ObjectId.is_valid(x['category_id'])]
         names = {str(x['_id']): x['name'] async for x in db.categories.find({'_id': {'$in': cat_ids}})}
         breakdown = {}
         for row in rows:
             if row['type'] == 'Expense':
                 name = names.get(row['category_id'], 'Unknown')
-                breakdown[name] = breakdown.get(name, 0) + row['amount']
+                breakdown[name] = breakdown.get(name, Decimal('0')) + Decimal(str(row['amount']))
         self.write_json({'month': month, 'total_income': income, 'total_expenses': expenses, 'balance': income - expenses, 'expense_by_category': breakdown})

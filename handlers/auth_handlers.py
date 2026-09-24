@@ -14,7 +14,7 @@ class RegisterHandler(BaseHandler):
         try:
             payload = RegisterSchema.model_validate(self.parse_json())
         except ValidationError as exc:
-            raise tornado.web.HTTPError(422, reason=str(exc)) from exc
+            raise self.validation_error(exc) from exc
         email = str(payload.email).lower()
         if await db.users.find_one({'email': email}):
             raise tornado.web.HTTPError(409, reason='Email is already registered')
@@ -27,7 +27,7 @@ class LoginHandler(BaseHandler):
         try:
             payload = LoginSchema.model_validate(self.parse_json())
         except ValidationError as exc:
-            raise tornado.web.HTTPError(422, reason=str(exc)) from exc
+            raise self.validation_error(exc) from exc
         user = await db.users.find_one({'email': str(payload.email).lower()})
         if not user or not bcrypt.checkpw(payload.password.encode(), user['password_hash'].encode()):
             raise tornado.web.HTTPError(401, reason='Invalid email or password')
@@ -53,7 +53,7 @@ class ApiKeyHandler(BaseHandler):
         try:
             payload = ApiKeyCreateSchema.model_validate(self.parse_json())
         except ValidationError as exc:
-            raise tornado.web.HTTPError(422, reason=str(exc)) from exc
+            raise self.validation_error(exc) from exc
         raw_key, key_hash = generate_api_key()
         result = await db.api_keys.insert_one({'key_hash': key_hash, 'name': payload.name, 'user_id': None, 'is_active': True, 'created_at': datetime.now(timezone.utc), 'last_used_at': None})
         self.write_json({'id': str(result.inserted_id), 'name': payload.name, 'api_key': raw_key}, 201)

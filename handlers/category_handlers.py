@@ -23,7 +23,7 @@ class CategoryCollectionHandler(BaseHandler):
         try:
             payload = CategoryCreateSchema.model_validate(self.parse_json())
         except ValidationError as exc:
-            raise tornado.web.HTTPError(422, reason=str(exc)) from exc
+            raise self.validation_error(exc) from exc
         name = payload.name.strip()
         if not name:
             raise tornado.web.HTTPError(422, reason='Category name cannot be blank')
