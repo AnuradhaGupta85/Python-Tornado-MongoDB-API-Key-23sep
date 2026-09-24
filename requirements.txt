@@ -1,0 +1,11 @@
+tornado==6.4.2
+motor
+pymongo
+pydantic
+email-validator
+python-dotenv
+bcrypt==4.0.1
+pytest
+tavern
+openpyxl
+python-docx

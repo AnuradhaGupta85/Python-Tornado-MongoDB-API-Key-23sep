@@ -1,0 +1,23 @@
+services:
+  mongodb:
+    image: mongo:7.0.15
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - mongo_data:/data/db
+  app:
+    build: .
+    ports:
+      - "25350:8000"
+    environment:
+      DATABASE_URL: mongodb://mongodb:27017/gen_476aba8b5f9e
+      ADMIN_API_KEY: JQ12P6v-hmyzs-CJgmz49z5pI4jC8RdFEZdTDKGIv0I
+      PORT: 8000
+    depends_on:
+      mongodb:
+        condition: service_healthy
+volumes:
+  mongo_data:

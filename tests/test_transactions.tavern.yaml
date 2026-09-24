@@ -1,0 +1,85 @@
+test_name: Transaction CRUD filtering and monthly summary
+stages:
+  - name: Register transaction user
+    request:
+      url: "{tavern.env_vars.BASE_URL}/api/v1/auth/register"
+      method: POST
+      json:
+        email: transaction-test@example.com
+        password: password123
+    response:
+      status_code: 201
+  - name: Login transaction user
+    request:
+      url: "{tavern.env_vars.BASE_URL}/api/v1/auth/login"
+      method: POST
+      json:
+        email: transaction-test@example.com
+        password: password123
+    response:
+      status_code: 200
+      save:
+        json:
+          api_key: api_key
+  - name: List predefined categories
+    request:
+      url: "{tavern.env_vars.BASE_URL}/api/v1/categories"
+      method: GET
+      headers:
+        X-API-Key: "{api_key}"
+    response:
+      status_code: 200
+      save:
+        json:
+          category_id: items[0].id
+  - name: Create expense transaction
+    request:
+      url: "{tavern.env_vars.BASE_URL}/api/v1/transactions"
+      method: POST
+      headers:
+        X-API-Key: "{api_key}"
+      json:
+        amount: 12.50
+        type: Expense
+        category_id: "{category_id}"
+        date: "2025-01-15"
+        description: Lunch
+    response:
+      status_code: 201
+      save:
+        json:
+          transaction_id: id
+  - name: Filter transactions
+    request:
+      url: "{tavern.env_vars.BASE_URL}/api/v1/transactions?type=Expense&search=Lunch&sort_by=amount&order=asc"
+      method: GET
+      headers:
+        X-API-Key: "{api_key}"
+    response:
+      status_code: 200
+  - name: Monthly summary
+    request:
+      url: "{tavern.env_vars.BASE_URL}/api/v1/transactions/summary/monthly?month=2025-01"
+      method: GET
+      headers:
+        X-API-Key: "{api_key}"
+    response:
+      status_code: 200
+  - name: Update transaction
+    request:
+      url: "{tavern.env_vars.BASE_URL}/api/v1/transactions/{transaction_id}"
+      method: PUT
+      headers:
+        X-API-Key: "{api_key}"
+      json:
+        amount: 15.00
+    response:
+      status_code: 200
+  - name: Delete transaction
+    request:
+      url: "{tavern.env_vars.BASE_URL}/api/v1/transactions/{transaction_id}"
+      method: DELETE
+      headers:
+        X-API-Key: "{api_key}"
+    response:
+      status_code: 204

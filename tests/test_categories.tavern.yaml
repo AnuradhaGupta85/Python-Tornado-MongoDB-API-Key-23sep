@@ -1,0 +1,52 @@
+test_name: Category management
+stages:
+  - name: Register category user
+    request:
+      url: "{tavern.env_vars.BASE_URL}/api/v1/auth/register"
+      method: POST
+      json:
+        email: category-test@example.com
+        password: password123
+    response:
+      status_code: 201
+  - name: Login category user
+    request:
+      url: "{tavern.env_vars.BASE_URL}/api/v1/auth/login"
+      method: POST
+      json:
+        email: category-test@example.com
+        password: password123
+    response:
+      status_code: 200
+      save:
+        json:
+          api_key: api_key
+  - name: Create custom category
+    request:
+      url: "{tavern.env_vars.BASE_URL}/api/v1/categories"
+      method: POST
+      headers:
+        X-API-Key: "{api_key}"
+      json:
+        name: Test Category
+    response:
+      status_code: 201
+      save:
+        json:
+          category_id: id
+  - name: List categories
+    request:
+      url: "{tavern.env_vars.BASE_URL}/api/v1/categories?limit=20&offset=0"
+      method: GET
+      headers:
+        X-API-Key: "{api_key}"
+    response:
+      status_code: 200
+  - name: Delete unused custom category
+    request:
+      url: "{tavern.env_vars.BASE_URL}/api/v1/categories/{category_id}"
+      method: DELETE
+      headers:
+        X-API-Key: "{api_key}"
+    response:
+      status_code: 204

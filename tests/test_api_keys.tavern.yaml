@@ -1,0 +1,32 @@
+test_name: Administrative API key lifecycle
+stages:
+  - name: Create administrative key
+    request:
+      url: "{tavern.env_vars.BASE_URL}/api/v1/admin/api-keys"
+      method: POST
+      headers:
+        X-Admin-Key: "JQ12P6v-hmyzs-CJgmz49z5pI4jC8RdFEZdTDKGIv0I"
+      json:
+        name: test-managed-key
+    response:
+      status_code: 201
+      save:
+        json:
+          key_id: id
+          raw_key: api_key
+  - name: List administrative keys
+    request:
+      url: "{tavern.env_vars.BASE_URL}/api/v1/admin/api-keys"
+      method: GET
+      headers:
+        X-Admin-Key: "JQ12P6v-hmyzs-CJgmz49z5pI4jC8RdFEZdTDKGIv0I"
+    response:
+      status_code: 200
+  - name: Revoke administrative key
+    request:
+      url: "{tavern.env_vars.BASE_URL}/api/v1/admin/api-keys/{key_id}"
+      method: DELETE
+      headers:
+        X-Admin-Key: "JQ12P6v-hmyzs-CJgmz49z5pI4jC8RdFEZdTDKGIv0I"
+    response:
+      status_code: 204
