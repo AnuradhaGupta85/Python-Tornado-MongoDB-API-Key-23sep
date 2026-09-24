@@ -1,7 +1,9 @@
 # Transaction CRUD, filtering, sorting, and monthly summary handlers.
 from datetime import datetime, timezone, date
 from decimal import Decimal
+from io import BytesIO
 import re
+from openpyxl import Workbook
 from bson import ObjectId
 from pydantic import ValidationError
 import tornado.web
@@ -121,6 +123,47 @@ class TransactionDetailHandler(TransactionCollectionHandler):
             raise tornado.web.HTTPError(404, reason='Transaction not found')
         return doc
 
+class TransactionExportHandler(BaseHandler):
+    auth_required = True
+
+    async def get(self) -> None:
+        query = {'user_id': self.current_api_key['user_id']}
+        month = self.get_query_argument('month', None)
+        start_date = self.get_query_argument('start_date', None)
+        end_date = self.get_query_argument('end_date', None)
+        if month and (start_date or end_date):
+            raise tornado.web.HTTPError(400, reason='month cannot be combined with start_date or end_date')
+        if month:
+            try:
+                datetime.strptime(month, '%Y-%m')
+            except ValueError as exc:
+                raise tornado.web.HTTPError(400, reason='month must be YYYY-MM') from exc
+            query['date'] = {'$gte': f'{month}-01', '$lte': f'{month}-31'}
+        elif start_date or end_date:
+            query['date'] = {}
+            for value, operator, label in ((start_date, '$gte', 'start_date'), (end_date, '$lte', 'end_date')):
+                if value:
+                    try:
+                        date.fromisoformat(value)
+                    except ValueError as exc:
+                        raise tornado.web.HTTPError(400, reason=f'{label} must be YYYY-MM-DD') from exc
+                    query['date'][operator] = value
+
+        rows = [row async for row in db.transactions.find(query).sort('date', 1)]
+        category_ids = [ObjectId(row['category_id']) for row in rows if ObjectId.is_valid(row['category_id'])]
+        category_names = {str(category['_id']): category['name'] async for category in db.categories.find({'_id': {'$in': category_ids}})}
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = 'Transactions'
+        sheet.append(['Date', 'Type', 'Category', 'Amount', 'Description'])
+        for row in rows:
+            sheet.append([row['date'], row['type'], category_names.get(row['category_id'], 'Unknown'), str(row['amount']), row.get('description', '')])
+        output = BytesIO()
+        workbook.save(output)
+        self.set_header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        self.set_header('Content-Disposition', 'attachment; filename="transactions.xlsx"')
+        self.write(output.getvalue())
+
 class MonthlySummaryHandler(BaseHandler):
     auth_required = True
     async def get(self) -> None:
@@ -140,3 +183,27 @@ class MonthlySummaryHandler(BaseHandler):
                 name = names.get(row['category_id'], 'Unknown')
                 breakdown[name] = breakdown.get(name, Decimal('0')) + Decimal(str(row['amount']))
         self.write_json({'month': month, 'total_income': income, 'total_expenses': expenses, 'balance': income - expenses, 'expense_by_category': breakdown})
+
+class YearlySummaryHandler(BaseHandler):
+    auth_required = True
+
+    async def get(self) -> None:
+        year = self.get_query_argument('year', '')
+        try:
+            datetime.strptime(year, '%Y')
+        except ValueError as exc:
+            raise tornado.web.HTTPError(400, reason='year must be YYYY') from exc
+        rows = [row async for row in db.transactions.find({
+            'user_id': self.current_api_key['user_id'],
+            'date': {'$gte': f'{year}-01-01', '$lte': f'{year}-12-31'}
+        })]
+        income = sum((Decimal(str(row['amount'])) for row in rows if row['type'] == 'Income'), Decimal('0'))
+        expenses = sum((Decimal(str(row['amount'])) for row in rows if row['type'] == 'Expense'), Decimal('0'))
+        category_ids = [ObjectId(row['category_id']) for row in rows if row['type'] == 'Expense' and ObjectId.is_valid(row['category_id'])]
+        names = {str(category['_id']): category['name'] async for category in db.categories.find({'_id': {'$in': category_ids}})}
+        breakdown = {}
+        for row in rows:
+            if row['type'] == 'Expense':
+                name = names.get(row['category_id'], 'Unknown')
+                breakdown[name] = breakdown.get(name, Decimal('0')) + Decimal(str(row['amount']))
+        self.write_json({'year': year, 'total_income': income, 'total_expenses': expenses, 'balance': income - expenses, 'expense_by_category': breakdown})

@@ -5,7 +5,7 @@ from pydantic import ValidationError
 import tornado.web
 from base_handler import BaseHandler
 from database import db
-from schemas import CategoryCreateSchema
+from schemas import CategoryCreateSchema, CategoryUpdateSchema
 
 class CategoryCollectionHandler(BaseHandler):
     auth_required = True
@@ -48,6 +48,30 @@ class CategoryDetailHandler(BaseHandler):
     async def get(self, category_id: str) -> None:
         category = await self._available(category_id)
         self.write_json({'id': str(category['_id']), 'name': category['name'], 'is_predefined': category['is_predefined'], 'user_id': category.get('user_id')})
+
+    async def put(self, category_id: str) -> None:
+        category = await self._available(category_id)
+        if category['is_predefined'] or category.get('user_id') != self.current_api_key['user_id']:
+            raise tornado.web.HTTPError(403, reason='Only your custom categories can be renamed')
+        try:
+            payload = CategoryUpdateSchema.model_validate(self.parse_json())
+        except ValidationError as exc:
+            raise self.validation_error(exc) from exc
+        name = payload.name.strip()
+        if not name:
+            raise tornado.web.HTTPError(422, reason='Category name cannot be blank')
+        existing = await db.categories.find_one({
+            'user_id': self.current_api_key['user_id'], 'name': name, '_id': {'$ne': category['_id']}
+        })
+        if existing:
+            raise tornado.web.HTTPError(409, reason='You already have a category with this name')
+        try:
+            await db.categories.update_one({'_id': category['_id']}, {'$set': {'name': name}})
+        except Exception as exc:
+            if 'duplicate key' in str(exc).lower():
+                raise tornado.web.HTTPError(409, reason='You already have a category with this name') from exc
+            raise
+        self.write_json({'id': str(category['_id']), 'name': name, 'is_predefined': False, 'user_id': category['user_id']})
 
     async def delete(self, category_id: str) -> None:
         category = await self._available(category_id)

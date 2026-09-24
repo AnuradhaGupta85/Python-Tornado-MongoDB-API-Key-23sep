@@ -6,7 +6,7 @@ from pydantic import ValidationError
 import tornado.web
 from base_handler import BaseHandler
 from database import db
-from schemas import RegisterSchema, LoginSchema, ApiKeyCreateSchema
+from schemas import RegisterSchema, LoginSchema, ApiKeyCreateSchema, ChangePasswordSchema
 from security import generate_api_key, get_admin_key
 
 class RegisterHandler(BaseHandler):
@@ -46,6 +46,55 @@ class MeHandler(BaseHandler):
         if not user:
             raise tornado.web.HTTPError(401, reason='User no longer exists')
         self.write_json({'id': str(user['_id']), 'email': user['email'], 'created_at': user['created_at']})
+
+class ChangePasswordHandler(BaseHandler):
+    auth_required = True
+
+    async def post(self) -> None:
+        try:
+            payload = ChangePasswordSchema.model_validate(self.parse_json())
+        except ValidationError as exc:
+            raise self.validation_error(exc) from exc
+        try:
+            user_id = ObjectId(self.current_api_key['user_id'])
+        except Exception as exc:
+            raise tornado.web.HTTPError(401, reason='Invalid user key') from exc
+        user = await db.users.find_one({'_id': user_id})
+        if not user:
+            raise tornado.web.HTTPError(401, reason='User no longer exists')
+        if not bcrypt.checkpw(payload.current_password.encode(), user['password_hash'].encode()):
+            raise tornado.web.HTTPError(401, reason='Current password is incorrect')
+        password_hash = bcrypt.hashpw(payload.new_password.encode(), bcrypt.gensalt()).decode()
+        await db.users.update_one({'_id': user_id}, {'$set': {'password_hash': password_hash}})
+        self.write_json({'detail': 'Password updated successfully'})
+
+class UserApiKeyCollectionHandler(BaseHandler):
+    auth_required = True
+
+    async def get(self) -> None:
+        user_id = self.current_api_key['user_id']
+        keys = []
+        async for key in db.api_keys.find({'user_id': user_id, 'is_active': True}, {'key_hash': 0}).sort('created_at', -1):
+            keys.append({
+                'id': str(key['_id']), 'name': key['name'], 'created_at': key['created_at'],
+                'last_used_at': key.get('last_used_at'), 'is_current': key['_id'] == self.current_api_key['_id']
+            })
+        self.write_json({'items': keys, 'total': len(keys)})
+
+class UserApiKeyDetailHandler(BaseHandler):
+    auth_required = True
+
+    async def delete(self, key_id: str) -> None:
+        if not ObjectId.is_valid(key_id):
+            raise tornado.web.HTTPError(404, reason='API key not found')
+        result = await db.api_keys.update_one(
+            {'_id': ObjectId(key_id), 'user_id': self.current_api_key['user_id'], 'is_active': True},
+            {'$set': {'is_active': False}}
+        )
+        if not result.matched_count:
+            raise tornado.web.HTTPError(404, reason='API key not found')
+        self.set_status(204)
+        self.finish()
 
 class ApiKeyHandler(BaseHandler):
     async def post(self) -> None:

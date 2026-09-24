@@ -5,9 +5,11 @@ import tornado.ioloop
 import tornado.web
 from base_handler import BaseHandler
 from database import ensure_indexes
-from handlers.auth_handlers import RegisterHandler, LoginHandler, MeHandler, ApiKeyHandler, ApiKeyDetailHandler
+from handlers.auth_handlers import (RegisterHandler, LoginHandler, MeHandler, ChangePasswordHandler,
+                                   UserApiKeyCollectionHandler, UserApiKeyDetailHandler, ApiKeyHandler, ApiKeyDetailHandler)
 from handlers.category_handlers import CategoryCollectionHandler, CategoryDetailHandler
-from handlers.transaction_handlers import TransactionCollectionHandler, TransactionDetailHandler, MonthlySummaryHandler
+from handlers.transaction_handlers import (TransactionCollectionHandler, TransactionDetailHandler,
+                                           TransactionExportHandler, MonthlySummaryHandler, YearlySummaryHandler)
 
 load_dotenv('.env_5ad06667-9bcd-48b5-bb6c-a469b3be3571', override=True)
 
@@ -21,12 +23,17 @@ def make_app() -> tornado.web.Application:
         (r'/api/v1/auth/register', RegisterHandler),
         (r'/api/v1/auth/login', LoginHandler),
         (r'/api/v1/auth/me', MeHandler),
+        (r'/api/v1/auth/change-password', ChangePasswordHandler),
+        (r'/api/v1/auth/api-keys', UserApiKeyCollectionHandler),
+        (r'/api/v1/auth/api-keys/([^/]+)', UserApiKeyDetailHandler),
         (r'/api/v1/admin/api-keys', ApiKeyHandler),
         (r'/api/v1/admin/api-keys/([^/]+)', ApiKeyDetailHandler),
         (r'/api/v1/categories', CategoryCollectionHandler),
         (r'/api/v1/categories/([^/]+)', CategoryDetailHandler),
         (r'/api/v1/transactions', TransactionCollectionHandler),
+        (r'/api/v1/transactions/export', TransactionExportHandler),
         (r'/api/v1/transactions/summary/monthly', MonthlySummaryHandler),
+        (r'/api/v1/transactions/summary/yearly', YearlySummaryHandler),
         (r'/api/v1/transactions/([^/]+)', TransactionDetailHandler),
     ], debug=False)
 
